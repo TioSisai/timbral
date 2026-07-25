@@ -1,0 +1,44 @@
+# Single source of project/dependency/pytest configuration (as described in the README).
+# The runtime is the containerized Python ($CONTAINER_ENV_HOME/audioal/bin/python);
+# the dependency lower bounds are the versions verified inside that container; datasets is
+# pinned to the 5.x line (relied on for map/num_proc semantics).
+# This file serves metadata and pytest configuration purposes only, not as an installable
+# distribution: timbral locates the repository root via rootutils' .project-root marker at
+# import time, and that marker is not installed along with the package by pip install.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "timbral"
+version = "0.1.0"
+description = "Audio dataset preparation and embedding extraction pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.0,<6",
+    "fsspec>=2026.4.0",
+    "s3fs>=2026.4.0",
+    "numpy>=2.4",
+    "pandas>=2.3",
+    "librosa>=0.11",
+    "soundfile>=0.14",
+    "h5py>=3.16",
+    "torch>=2.11",
+    "torchaudio>=2.11",
+    "transformers>=5.13",
+    "huggingface_hub>=1.23",
+    "safetensors>=0.8",
+    "rootutils>=1.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=9.1"]
+# Dedicated to scripts/extra/beats_dl.py (playwright is not pre-installed in the container; install as needed)
+beats-dl = ["playwright", "requests>=2.34"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The src import path is injected by each tests/*/conftest.py via rootutils; not duplicated here
