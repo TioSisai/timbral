@@ -18,12 +18,14 @@ from timbral.models.encoders import (
     BeatsEncoder,
     ClapHtsatEncoder,
     PannsCnn14Encoder,
+    Wav2Vec2Encoder,
 )
 from timbral.models.transforms import (
     AstKaldiFbankTransform,
     BeatsKaldiFbankTransform,
     ClapLogmelTransform,
     PannsLogmelTransform,
+    Wav2Vec2WaveformTransform,
 )
 
 _BEATS_MODELS = (
@@ -47,6 +49,7 @@ _BEATS_MODELS = (
 _BUILTIN_MODELS = (
     "MIT/ast-finetuned-audioset-10-10-0.4593",
     *_BEATS_MODELS[:5],
+    "facebook/wav2vec2-base",
     *_BEATS_MODELS[5:],
     "laion/clap-htsat-fused",
     "panns-16k-cnn14-max_mean",
@@ -58,6 +61,10 @@ _EXPECTED_COMPONENT_TYPES = {
     "MIT/ast-finetuned-audioset-10-10-0.4593": (
         AstKaldiFbankTransform,
         AstEncoder,
+    ),
+    "facebook/wav2vec2-base": (
+        Wav2Vec2WaveformTransform,
+        Wav2Vec2Encoder,
     ),
     "laion/clap-htsat-fused": (ClapLogmelTransform, ClapHtsatEncoder),
     "panns-16k-cnn14-max_mean": (PannsLogmelTransform, PannsCnn14Encoder),
@@ -154,6 +161,7 @@ def test_panns_components_hold_frozen_configuration(name):
 
 _EXPECTED_METADATA = {
     "MIT/ast-finetuned-audioset-10-10-0.4593": (16000, 768),
+    "facebook/wav2vec2-base": (16000, 768),
     "laion/clap-htsat-fused": (48000, 512),
     "panns-16k-cnn14-max_mean": (16000, 2048),
     "panns-32k-cnn14-decision_level_max": (32000, 2048),
@@ -207,6 +215,21 @@ def test_fixed_kwargs_cannot_be_overridden():
             granularity="clip",
             pretrained=False,
             n_fft=256,
+        )
+
+
+def test_wav2vec2_pins_official_normalization():
+    transform, _ = create_model(
+        "facebook/wav2vec2-base", granularity="clip", pretrained=False
+    )
+    assert transform.do_normalize is True
+
+    with pytest.raises(TypeError, match="are fixed by registered name"):
+        create_model(
+            "facebook/wav2vec2-base",
+            granularity="clip",
+            pretrained=False,
+            do_normalize=False,
         )
 
 

@@ -83,7 +83,7 @@ All optional, set as needed:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `HF_HOME` / `HF_HUB_CACHE` | Root of the Hugging Face cache; this repository's encoder weights are stored under `$HF_HUB_CACHE/audioencoders/` (PANNs by model name, AST/CLAP by repo_id, BEATs all under `beats/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
+| `HF_HOME` / `HF_HUB_CACHE` | Root of the Hugging Face cache; this repository's encoder weights are stored under `$HF_HUB_CACHE/audioencoders/` (PANNs by model name, AST/CLAP/wav2vec2 by repo_id, BEATs all under `beats/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
 | `TMPDIR` | Where `map`'s temporary Arrow files are written when the output goes to `s3://` | system temp directory |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_S3_ENDPOINT` | Credentials and endpoint for writing to `s3://` (S3-compatible storage other than AWS must specify the endpoint) | none |
 
@@ -209,15 +209,16 @@ Registered `--model_name` values:
 | PANNs | `panns-16k-cnn14-max_mean`, `panns-32k-cnn14-max_mean`, `panns-32k-cnn14-decision_level_max` |
 | AST | `MIT/ast-finetuned-audioset-10-10-0.4593` |
 | CLAP | `laion/clap-htsat-fused` (clip granularity only) |
+| wav2vec2 | `facebook/wav2vec2-base` |
 | BEATs | `beats_iter1`/`beats_iter2`/`beats_iter3`/`beats_iter3_plus_as20k`/`beats_iter3_plus_as2m`, plus the corresponding `fine_tuned_*_cpt1`/`cpt2`, 15 in total |
 
 Get the full list programmatically: `from timbral.models import list_models; list_models()`.
 
 ### 4. Pretrained Weights
 
-PANNs, AST, and CLAP weights are downloaded automatically to `$HF_HUB_CACHE/audioencoders/`
-the first time the model is constructed, and verified against a fixed SHA-256 — no manual
-preparation is needed.
+PANNs, AST, CLAP, and wav2vec2 weights are downloaded automatically to
+`$HF_HUB_CACHE/audioencoders/` the first time the model is constructed, and verified
+against a fixed SHA-256 — no manual preparation is needed.
 
 BEATs officially distributes weights only via OneDrive share links, and the runtime code
 contains no download logic; a standalone script must be run first (requires playwright, see

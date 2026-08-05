@@ -77,7 +77,7 @@ pip install -e ".[beats-dl]" && playwright install chromium
 
 | 变量 | 作用 | 默认 |
 |---|---|---|
-| `HF_HOME` / `HF_HUB_CACHE` | Hugging Face 缓存根; 本仓库的编码器权重落在 `$HF_HUB_CACHE/audioencoders/` 下(PANNs 按模型名、AST/CLAP 按 repo_id、BEATs 统一在 `beats/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
+| `HF_HOME` / `HF_HUB_CACHE` | Hugging Face 缓存根; 本仓库的编码器权重落在 `$HF_HUB_CACHE/audioencoders/` 下(PANNs 按模型名、AST/CLAP/wav2vec2 按 repo_id、BEATs 统一在 `beats/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
 | `TMPDIR` | 输出到 `s3://` 时 map 临时 Arrow 文件的落盘位置 | 系统临时目录 |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_S3_ENDPOINT` | 输出到 `s3://` 时的凭据与 endpoint(非 AWS 的兼容对象存储必须给 endpoint) | 无 |
 
@@ -192,14 +192,15 @@ python scripts/emb_prep.py \
 | PANNs | `panns-16k-cnn14-max_mean`、`panns-32k-cnn14-max_mean`、`panns-32k-cnn14-decision_level_max` |
 | AST | `MIT/ast-finetuned-audioset-10-10-0.4593` |
 | CLAP | `laion/clap-htsat-fused`(仅 clip 粒度) |
+| wav2vec2 | `facebook/wav2vec2-base` |
 | BEATs | `beats_iter1`/`beats_iter2`/`beats_iter3`/`beats_iter3_plus_as20k`/`beats_iter3_plus_as2m`, 及对应的 `fine_tuned_*_cpt1`/`cpt2`, 共 15 个 |
 
 程序内取全量列表: `from timbral.models import list_models; list_models()`。
 
 ### 4. 预训练权重
 
-PANNs、AST、CLAP 的权重在首次构造模型时自动下载到 `$HF_HUB_CACHE/audioencoders/` 下,
-并按固定 SHA-256 校验, 无需手工准备。
+PANNs、AST、CLAP、wav2vec2 的权重在首次构造模型时自动下载到
+`$HF_HUB_CACHE/audioencoders/` 下, 并按固定 SHA-256 校验, 无需手工准备。
 
 BEATs 官方只通过 OneDrive 分享链接发布权重, 运行时不含下载代码, 需要先跑独立脚本
 (依赖 playwright, 见上文可选依赖):

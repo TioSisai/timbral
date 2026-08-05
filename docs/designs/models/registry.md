@@ -42,14 +42,16 @@ the registration name is the local cache model name from
 registration name is the entry name from helpers (a naming conversion of
 the cells in the official README table). The registry's keys uniformly
 reference helpers constants (`AST_CHECKPOINT.repo_id`,
-`CLAP_CHECKPOINT.repo_id`, `PANNS_CHECKPOINTS[...].model_name`, and the
-keys of `BEATS_CHECKPOINTS`), rather than literal strings, sharing a single
-source of truth with the checkpoint identities:
+`CLAP_CHECKPOINT.repo_id`, `WAV2VEC2_CHECKPOINT.repo_id`,
+`PANNS_CHECKPOINTS[...].model_name`, and the keys of `BEATS_CHECKPOINTS`),
+rather than literal strings, sharing a single source of truth with the
+checkpoint identities:
 
 | Registration name | Transform | Encoder | Supported granularities |
 |---|---|---|---|
 | `MIT/ast-finetuned-audioset-10-10-0.4593` | `AstKaldiFbankTransform` | `AstEncoder` | clip, frame |
 | `laion/clap-htsat-fused` | `ClapLogmelTransform` | `ClapHtsatEncoder` | clip |
+| `facebook/wav2vec2-base` | `Wav2Vec2WaveformTransform` | `Wav2Vec2Encoder` | clip, frame |
 | `panns-16k-cnn14-max_mean` | `PannsLogmelTransform` | `PannsCnn14Encoder` | clip, frame |
 | `panns-32k-cnn14-max_mean` | `PannsLogmelTransform` | `PannsCnn14Encoder` | clip, frame |
 | `panns-32k-cnn14-decision_level_max` | `PannsLogmelTransform` | `PannsCnn14Encoder` | clip, frame |
@@ -163,6 +165,14 @@ The specs for `MIT/ast-finetuned-audioset-10-10-0.4593` and
 constructors take no parameters, and the common parameters are routed to
 reach only the Encoder.
 
+The spec for `facebook/wav2vec2-base` pins
+`fixed_kwargs={"do_normalize": True}`, matching the official
+preprocessor's `do_normalize=true`, so the registered name always
+reproduces the official frontend and the call site cannot override it
+(same policy as the PANNS DSP parameters). The switch remains available
+when constructing `Wav2Vec2WaveformTransform` directly; future wav2vec2
+variants pin their own value at registration time.
+
 For the three PANNS registration names, `fixed_kwargs` consists of
 `target_sample_rate`, `variant`, and the official frontend DSP parameters.
 The DSP parameters directly reference
@@ -226,8 +236,8 @@ imported from `timbral.models.transforms` and `timbral.models.encoders`.
 `tests/models/test_registry.py`, entirely using `pretrained=False`, with no
 network access:
 
-- `list_models` returns twenty built-in registration names (5 existing + 15
-  BEATs), sorted alphabetically;
+- `list_models` returns twenty-one built-in registration names (6 single
+  entries + 15 BEATs), sorted alphabetically;
 - For each registration name, `create_model` returns a `ModelPair` whose
   `transform` / `encoder` are the concrete classes for that name, with
   `encoder.granularity` matching what was passed in;

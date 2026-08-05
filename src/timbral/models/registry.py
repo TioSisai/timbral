@@ -13,17 +13,20 @@ from .encoders import (
     ClapHtsatEncoder,
     Granularity,
     PannsCnn14Encoder,
+    Wav2Vec2Encoder,
 )
 from .helpers.ast_helpers import AST_CHECKPOINT
 from .helpers.beats import BEATS_CHECKPOINTS
 from .helpers.clap import CLAP_CHECKPOINT
 from .helpers.panns import PANNS_CHECKPOINTS, PANNS_OFFICIAL_FRONTENDS
+from .helpers.wav2vec2 import WAV2VEC2_CHECKPOINT
 from .transforms import (
     AstKaldiFbankTransform,
     BaseTransform,
     BeatsKaldiFbankTransform,
     ClapLogmelTransform,
     PannsLogmelTransform,
+    Wav2Vec2WaveformTransform,
 )
 
 _PUBLIC_PARAMETER_NAMES = frozenset(
@@ -80,6 +83,11 @@ MODELS: dict[str, ModelSpec] = {
     CLAP_CHECKPOINT.repo_id: ModelSpec(
         transform_cls=ClapLogmelTransform,
         encoder_cls=ClapHtsatEncoder,
+    ),
+    WAV2VEC2_CHECKPOINT.repo_id: ModelSpec(
+        transform_cls=Wav2Vec2WaveformTransform,
+        encoder_cls=Wav2Vec2Encoder,
+        fixed_kwargs={"do_normalize": True},
     ),
     **{
         metadata.model_name: ModelSpec(
