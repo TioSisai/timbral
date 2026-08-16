@@ -77,7 +77,7 @@ pip install -e ".[beats-dl]" && playwright install chromium
 
 | 变量 | 作用 | 默认 |
 |---|---|---|
-| `HF_HOME` / `HF_HUB_CACHE` | Hugging Face 缓存根; 本仓库的编码器权重落在 `$HF_HUB_CACHE/audioencoders/` 下(PANNs 按模型名、AST/CLAP/wav2vec2 按 repo_id、BEATs 统一在 `beats/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
+| `HF_HOME` / `HF_HUB_CACHE` | Hugging Face 缓存根; 本仓库的编码器权重落在 `$HF_HUB_CACHE/audioencoders/` 下(PANNs 按模型名、AST/CLAP/wav2vec2 按 repo_id、BEATs 统一在 `beats/`、ATST 统一在 `atst/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
 | `TMPDIR` | 输出到 `s3://` 时 map 临时 Arrow 文件的落盘位置 | 系统临时目录 |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_S3_ENDPOINT` | 输出到 `s3://` 时的凭据与 endpoint(非 AWS 的兼容对象存储必须给 endpoint) | 无 |
 
@@ -173,11 +173,13 @@ python scripts/emb_prep.py \
 | `--device` | `auto` | `auto` 按 cuda > mps > cpu 选择, 也可写 `cpu`/`cuda:0`/`mps` |
 | `--batch_size` | `32` | 每次前向的切片数 |
 | `--pretrained_dir` | 无 | 自定义权重目录, 默认用 Hugging Face 缓存下的项目专属目录 |
+| `--model_kwargs` | 无 | 模型专属构造参数, 传 JSON 对象, 如 `'{"n_blocks": 12}'`; 由 `create_model` 按 Transform 与 Encoder 的签名分派。`create_model` 自身的公共参数(`granularity`、`pretrained`、`pretrained_dir`)在此被拒绝 |
 | `--overwrite` | 关 | 输出已存在时删除重建 |
 
 输出路径恒为三级结构 `{output_dir}/{dataset_name}/{model_name}/{emb_hash}`, 模型名中的
-`/` 替换为 `--`, `emb_hash` 由 raw cache 的 `config_hash`、`model_name` 与 `granularity`
-计算(设备、批大小等执行参数不参与)。目录内含 `DatasetDict`、从 raw cache 拷贝的
+`/` 替换为 `--`, `emb_hash` 由 raw cache 的 `config_hash`、`model_name`、`granularity`, 以及
+非空时的 `model_kwargs` 计算(设备、批大小等执行参数不参与)。`--model_kwargs` 缺省或为空时
+完全不进入哈希, 因此该选项出现之前建好的缓存仍然命中原目录。目录内含 `DatasetDict`、从 raw cache 拷贝的
 `label_index.json`, 以及最后写入的 `emb_config.json`(完整参数快照, 兼作完成标记)。
 
 数据形态由缓存自动推断, 无需额外声明: weak 缓存标签直通; strong + clip 逐类聚合为 `[C]`
@@ -193,14 +195,30 @@ python scripts/emb_prep.py \
 | AST | `MIT/ast-finetuned-audioset-10-10-0.4593` |
 | CLAP | `laion/clap-htsat-fused`(仅 clip 粒度) |
 | wav2vec2 | `facebook/wav2vec2-base` |
+| ATST | `atst-clip-small`, `atst-clip-base` (仅 clip 粒度), `atst-frame-small`, `atst-frame-base` |
 | BEATs | `beats_iter1`/`beats_iter2`/`beats_iter3`/`beats_iter3_plus_as20k`/`beats_iter3_plus_as2m`, 及对应的 `fine_tuned_*_cpt1`/`cpt2`, 共 15 个 |
 
 程序内取全量列表: `from timbral.models import list_models; list_models()`。
 
+两个 ATST 家族接受 `n_blocks` 参数(1-12, 默认 1), 用于选择拼接末尾多少个 Transformer block,
+`n_blocks=12` 即官方下游配置。它会改变输出维度: ATST-Clip 为 `2 * n_blocks * D`(cls 分支加
+patch 均值分支), ATST-Frame 为 `n_blocks * D`, 其中 `D` = 384(small) / 768(base), 因此 frame
+粒度下 12 层配置的单条体积比默认值大两个数量级。经 `--model_kwargs` 传入:
+
+```bash
+python scripts/emb_prep.py \
+    --cache_dir /path/to/raw_cache/ESC-50 \
+    --model_name atst-frame-base --granularity frame \
+    --model_kwargs '{"n_blocks": 12}' \
+    --output_dir /path/to/emb_cache
+```
+
 ### 4. 预训练权重
 
-PANNs、AST、CLAP、wav2vec2 的权重在首次构造模型时自动下载到
-`$HF_HUB_CACHE/audioencoders/` 下, 并按固定 SHA-256 校验, 无需手工准备。
+PANNs、AST、CLAP、wav2vec2、ATST 的权重在首次构造模型时自动下载到
+`$HF_HUB_CACHE/audioencoders/` 下, 并按固定 SHA-256 校验, 无需手工准备。ATST 的四个
+checkpoint 取自官方直链(ATST-Clip 走阿里云 OSS, ATST-Frame 走 Google Drive), 是官方发布的
+完整训练 checkpoint, 因此 small 占 411 MB、base 占 1.4 GB, 尽管其中只用到 teacher encoder 部分。
 
 BEATs 官方只通过 OneDrive 分享链接发布权重, 运行时不含下载代码, 需要先跑独立脚本
 (依赖 playwright, 见上文可选依赖):

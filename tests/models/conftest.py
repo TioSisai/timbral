@@ -15,7 +15,15 @@ ROOT = rootutils.setup_root(
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-_ALIGNMENT_ENTRIES = ("panns", "ast", "clap", "beats", "wav2vec2")
+_ALIGNMENT_ENTRIES = (
+    "panns",
+    "ast",
+    "clap",
+    "beats",
+    "wav2vec2",
+    "atst_clip",
+    "atst_frame",
+)
 
 
 def pytest_addoption(parser):

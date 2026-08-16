@@ -10,6 +10,7 @@ from pathlib import Path
 
 from datasets.fingerprint import Hasher
 
+from timbral.models import PUBLIC_PARAMETER_NAMES
 from timbral.storage import is_s3_path
 
 
@@ -31,9 +32,14 @@ class EmbPrepConfig:
             frame granularity to probe the constant frame count.
         label_type: The raw cache's label type (weak/strong).
         raw_config_hash: The raw cache's config_hash.
-        emb_hash: Computed from the three fields {raw_config_hash,
-            model_name, granularity}; execution parameters such as
-            device/batch size are not included.
+        model_kwargs: Model-specific constructor parameters, forwarded
+            to create_model; an empty mapping means none were given.
+        emb_hash: Computed from {raw_config_hash, model_name,
+            granularity}, plus model_kwargs when it is non-empty.
+            Execution parameters such as device/batch size are not
+            included, and an empty model_kwargs is left out entirely so
+            that artifacts built before this parameter existed keep
+            hashing to the same value.
         label_index: The contents of the raw cache's label_index.json
             (class_name -> index).
         raw_prep_config: The full parameter snapshot from the raw cache's
@@ -47,6 +53,7 @@ class EmbPrepConfig:
     device: str
     batch_size: int
     pretrained_dir: str | None
+    model_kwargs: dict
     overwrite: bool
     dataset_name: str
     sr: int
@@ -60,7 +67,7 @@ class EmbPrepConfig:
 
 def resolve_config(cache_dir, model_name, granularity, output_dir=None,
                    device="auto", batch_size=32, pretrained_dir=None,
-                   overwrite=False) -> EmbPrepConfig:
+                   model_kwargs=None, overwrite=False) -> EmbPrepConfig:
     """Read the raw cache metadata, compute emb_hash, and derive the
     three-level output path.
 
@@ -83,6 +90,12 @@ def resolve_config(cache_dir, model_name, granularity, output_dir=None,
         batch_size: The batch_size and writer_batch_size used by map.
         pretrained_dir: A custom weights directory, passed through to
             timbral.models.create_model.
+        model_kwargs: Model-specific constructor parameters, passed
+            through to timbral.models.create_model; ``None`` and an
+            empty mapping are equivalent and stay out of emb_hash. The
+            public parameters of create_model are rejected here: they
+            are either fixed by this pipeline or carried by their own
+            parameter.
         overwrite: Whether to force a rebuild when the output already
             exists.
 
@@ -92,6 +105,8 @@ def resolve_config(cache_dir, model_name, granularity, output_dir=None,
     Raises:
         FileNotFoundError: cache_dir is missing prep_config.json or
             label_index.json.
+        ValueError: model_kwargs carries one of create_model's public
+            parameters.
     """
     cache_dir = os.fspath(cache_dir)
     with open(os.path.join(cache_dir, "prep_config.json"),
@@ -102,11 +117,30 @@ def resolve_config(cache_dir, model_name, granularity, output_dir=None,
         label_index = json.load(f)
 
     raw_config_hash = raw_prep_config["config_hash"]
-    emb_hash = Hasher.hash({
+    model_kwargs = dict(model_kwargs) if model_kwargs else {}
+    # create_model's public parameters would be accepted silently by its
+    # **kwargs, letting model_kwargs switch off pretrained weights and
+    # cache randomly initialized features under a directory that gives no
+    # hint of it. granularity and pretrained_dir have their own
+    # parameters, and pretrained is fixed by this pipeline.
+    public_conflicts = sorted(model_kwargs.keys() & PUBLIC_PARAMETER_NAMES)
+    if public_conflicts:
+        raise ValueError(
+            f"model_kwargs must not contain the public parameters "
+            f"{public_conflicts}; granularity and pretrained_dir have "
+            "their own parameters, and pretrained is fixed."
+        )
+    hash_fields = {
         "raw_config_hash": raw_config_hash,
         "model_name": model_name,
         "granularity": granularity,
-    })
+    }
+    # Adding the key at all changes the digest, so an empty mapping is
+    # omitted rather than hashed as {}: runs that predate this
+    # parameter keep resolving to their existing output directory.
+    if model_kwargs:
+        hash_fields["model_kwargs"] = model_kwargs
+    emb_hash = Hasher.hash(hash_fields)
     if is_s3_path(output_dir):
         final_output_dir = posixpath.join(
             output_dir.rstrip("/"), raw_prep_config["dataset_name"],
@@ -125,6 +159,7 @@ def resolve_config(cache_dir, model_name, granularity, output_dir=None,
         batch_size=batch_size,
         pretrained_dir=(None if pretrained_dir is None
                         else os.fspath(pretrained_dir)),
+        model_kwargs=model_kwargs,
         overwrite=overwrite,
         dataset_name=raw_prep_config["dataset_name"],
         sr=raw_prep_config["sr"],

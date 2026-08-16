@@ -8,6 +8,8 @@ from typing import Any, NamedTuple
 
 from .encoders import (
     AstEncoder,
+    AtstClipEncoder,
+    AtstFrameEncoder,
     BaseEncoder,
     BeatsEncoder,
     ClapHtsatEncoder,
@@ -16,12 +18,14 @@ from .encoders import (
     Wav2Vec2Encoder,
 )
 from .helpers.ast_helpers import AST_CHECKPOINT
+from .helpers.atst import ATST_CHECKPOINTS
 from .helpers.beats import BEATS_CHECKPOINTS
 from .helpers.clap import CLAP_CHECKPOINT
 from .helpers.panns import PANNS_CHECKPOINTS, PANNS_OFFICIAL_FRONTENDS
 from .helpers.wav2vec2 import WAV2VEC2_CHECKPOINT
 from .transforms import (
     AstKaldiFbankTransform,
+    AtstMelspecTransform,
     BaseTransform,
     BeatsKaldiFbankTransform,
     ClapLogmelTransform,
@@ -29,7 +33,7 @@ from .transforms import (
     Wav2Vec2WaveformTransform,
 )
 
-_PUBLIC_PARAMETER_NAMES = frozenset(
+PUBLIC_PARAMETER_NAMES = frozenset(
     ("granularity", "pretrained", "pretrained_dir")
 )
 
@@ -66,7 +70,7 @@ class ModelSpec:
         ``create_model``'s public parameters.
         """
         conflicts = sorted(
-            self.fixed_kwargs.keys() & _PUBLIC_PARAMETER_NAMES
+            self.fixed_kwargs.keys() & PUBLIC_PARAMETER_NAMES
         )
         if conflicts:
             raise ValueError(
@@ -103,6 +107,18 @@ MODELS: dict[str, ModelSpec] = {
             target_sample_rate,
             variant,
         ), metadata in PANNS_CHECKPOINTS.items()
+    },
+    **{
+        metadata.model_name: ModelSpec(
+            transform_cls=AtstMelspecTransform,
+            encoder_cls=(
+                AtstClipEncoder
+                if metadata.family == "clip"
+                else AtstFrameEncoder
+            ),
+            fixed_kwargs={"arch": metadata.arch},
+        )
+        for metadata in ATST_CHECKPOINTS.values()
     },
     **{
         entry: ModelSpec(
@@ -211,6 +227,7 @@ def list_models() -> list[str]:
 
 
 __all__ = (
+    "PUBLIC_PARAMETER_NAMES",
     "ModelPair",
     "ModelSpec",
     "create_model",

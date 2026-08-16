@@ -83,7 +83,7 @@ All optional, set as needed:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `HF_HOME` / `HF_HUB_CACHE` | Root of the Hugging Face cache; this repository's encoder weights are stored under `$HF_HUB_CACHE/audioencoders/` (PANNs by model name, AST/CLAP/wav2vec2 by repo_id, BEATs all under `beats/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
+| `HF_HOME` / `HF_HUB_CACHE` | Root of the Hugging Face cache; this repository's encoder weights are stored under `$HF_HUB_CACHE/audioencoders/` (PANNs by model name, AST/CLAP/wav2vec2 by repo_id, BEATs all under `beats/`, ATST all under `atst/`) | `~/.cache/huggingface`, `$HF_HOME/hub` |
 | `TMPDIR` | Where `map`'s temporary Arrow files are written when the output goes to `s3://` | system temp directory |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_S3_ENDPOINT` | Credentials and endpoint for writing to `s3://` (S3-compatible storage other than AWS must specify the endpoint) | none |
 
@@ -185,12 +185,15 @@ python scripts/emb_prep.py \
 | `--device` | `auto` | `auto` selects cuda > mps > cpu; can also be set explicitly to `cpu`/`cuda:0`/`mps` |
 | `--batch_size` | `32` | Number of segments per forward pass |
 | `--pretrained_dir` | none | Custom weights directory; defaults to the project-specific directory under the Hugging Face cache |
+| `--model_kwargs` | none | Model-specific constructor parameters as a JSON object, e.g. `'{"n_blocks": 12}'`; routed by `create_model` according to the Transform's and Encoder's signatures. `create_model`'s own public parameters (`granularity`, `pretrained`, `pretrained_dir`) are rejected here |
 | `--overwrite` | off | Delete and rebuild if the output already exists |
 
 The output path always follows a three-level structure
 `{output_dir}/{dataset_name}/{model_name}/{emb_hash}`, with `/` in the model name replaced by
 `--`. `emb_hash` is computed from the raw cache's `config_hash`, `model_name`, and
-`granularity` (execution parameters such as device and batch size are not included). The
+`granularity`, plus `model_kwargs` when it is non-empty (execution parameters such as device and batch size
+are not included). An omitted or empty `--model_kwargs` stays out of the hash entirely, so every cache built
+before this option existed keeps resolving to its original directory. The
 directory contains the `DatasetDict`, `label_index.json` copied from the raw cache, and
 `emb_config.json` written last (a full parameter snapshot that also serves as a completion
 marker).
@@ -210,15 +213,33 @@ Registered `--model_name` values:
 | AST | `MIT/ast-finetuned-audioset-10-10-0.4593` |
 | CLAP | `laion/clap-htsat-fused` (clip granularity only) |
 | wav2vec2 | `facebook/wav2vec2-base` |
+| ATST | `atst-clip-small`, `atst-clip-base` (clip granularity only), `atst-frame-small`, `atst-frame-base` |
 | BEATs | `beats_iter1`/`beats_iter2`/`beats_iter3`/`beats_iter3_plus_as20k`/`beats_iter3_plus_as2m`, plus the corresponding `fine_tuned_*_cpt1`/`cpt2`, 15 in total |
 
 Get the full list programmatically: `from timbral.models import list_models; list_models()`.
 
+The two ATST families accept an `n_blocks` parameter (1-12, default 1) selecting how many trailing
+Transformer blocks are concatenated; `n_blocks=12` reproduces the official downstream configuration. It
+changes the output width — ATST-Clip yields `2 * n_blocks * D` (a cls branch plus a patch-mean branch) and
+ATST-Frame yields `n_blocks * D`, with `D` = 384 (small) / 768 (base) — so at frame granularity the 12-block
+setting is two orders of magnitude larger per clip than the default. Pass it through `--model_kwargs`:
+
+```bash
+python scripts/emb_prep.py \
+    --cache_dir /path/to/raw_cache/ESC-50 \
+    --model_name atst-frame-base --granularity frame \
+    --model_kwargs '{"n_blocks": 12}' \
+    --output_dir /path/to/emb_cache
+```
+
 ### 4. Pretrained Weights
 
-PANNs, AST, CLAP, and wav2vec2 weights are downloaded automatically to
+PANNs, AST, CLAP, wav2vec2, and ATST weights are downloaded automatically to
 `$HF_HUB_CACHE/audioencoders/` the first time the model is constructed, and verified
-against a fixed SHA-256 — no manual preparation is needed.
+against a fixed SHA-256 — no manual preparation is needed. The four ATST checkpoints come from
+the official direct links (Aliyun OSS for ATST-Clip, Google Drive for ATST-Frame) and are the
+complete published training checkpoints, so they occupy 411 MB (small) and 1.4 GB (base) each
+even though only the teacher encoder inside is used.
 
 BEATs officially distributes weights only via OneDrive share links, and the runtime code
 contains no download logic; a standalone script must be run first (requires playwright, see

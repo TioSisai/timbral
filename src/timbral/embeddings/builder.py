@@ -80,7 +80,7 @@ def prepare_embeddings(config: EmbPrepConfig) -> str:
     device = _resolve_device(config.device)
     transform, encoder = create_model(
         config.model_name, granularity=config.granularity,
-        pretrained_dir=config.pretrained_dir)
+        pretrained_dir=config.pretrained_dir, **config.model_kwargs)
     transform = transform.to(device).eval()
     encoder = encoder.to(device).eval()
     if config.sr < transform.target_sample_rate:

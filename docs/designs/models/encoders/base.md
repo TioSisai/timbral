@@ -67,7 +67,7 @@ class BaseEncoder(nn.Module, ABC):
     """Abstract base class for all audio Encoders."""
 
     supported_granularities: ClassVar[frozenset[Granularity]] = frozenset()
-    embedding_dim: ClassVar[int]
+    embedding_dim: int
 
     def __init__(self, granularity: Granularity) -> None:
         """Initializes the Encoder and fixes the output granularity."""
@@ -124,16 +124,22 @@ class-attribute inheritance rules and can be queried before instantiation and be
 The base class performs no class-definition-time consistency check; the capability set and hook
 implementations of each concrete Encoder are guaranteed by its own tests.
 
-The embedding dimension is likewise an intrinsic class-level attribute:
+The embedding dimension is an intrinsic attribute of the concrete Encoder:
 
 ```python
-embedding_dim: ClassVar[int]
+embedding_dim: int
 ```
 
-`embedding_dim` is the last dimension `D` of the output `embedding`, declared as a ClassVar by each
-concrete class (AST 768, CLAP 512, PANNs 2048); the base class provides no default. Callers (such as an
-embedding-extraction orchestration layer) use it to build a well-shaped output schema before the forward
-pass.
+`embedding_dim` is the last dimension `D` of the output `embedding`; the base class provides no default.
+Callers (such as an embedding-extraction orchestration layer) use it to build a well-shaped output schema
+before the forward pass, and must read it **off the instance**.
+
+A concrete Encoder whose width is fixed by its architecture declares it as a class attribute, which also
+makes it queryable before instantiation (AST 768, CLAP 512, PANNs 2048, BEATs 768, wav2vec2 768). A concrete
+Encoder whose width depends on its constructor arguments assigns it per instance: the ATST families derive
+`D` from both `arch` and `n_blocks` (`2 * n_blocks * D` for ATST-Clip, `n_blocks * D` for ATST-Frame), so no
+single class-level value exists for them. The declaration is therefore instance-level, which admits both
+cases without requiring one Encoder class per width combination.
 
 ## Constructor interface
 
@@ -430,7 +436,7 @@ The table below records the final design of the Encoder public interface.
 | E42 | Model-specific inputs | Via `**kwargs` |
 | E43 | Model-specific outputs | Additional Tensor keys allowed |
 | E44 | Unknown kwargs | Must raise `TypeError` |
-| E45 | embedding_dim | Not a public constructor parameter or base-class state |
+| E45 | embedding_dim | Not a public constructor parameter or base-class state; read off the instance, declared as a class attribute only by Encoders of fixed width |
 | E46 | return_geometry | Removed; geometry is always returned |
 | E47 | Public maximum length | Not declared |
 | E48 | Intrinsic length limit | Checked by the concrete model's forward pass |

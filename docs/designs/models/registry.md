@@ -40,10 +40,14 @@ the registration name is the local cache model name from
 `timbral.models.helpers`; BEATs weights come from a public OneDrive share
 (see [`extra/beats-download.md`](extra/beats-download.md)), so the
 registration name is the entry name from helpers (a naming conversion of
-the cells in the official README table). The registry's keys uniformly
-reference helpers constants (`AST_CHECKPOINT.repo_id`,
-`CLAP_CHECKPOINT.repo_id`, `WAV2VEC2_CHECKPOINT.repo_id`,
-`PANNS_CHECKPOINTS[...].model_name`, and the keys of `BEATS_CHECKPOINTS`),
+the cells in the official README table). ATST weights are published as
+direct downloads outside any model hub (Aliyun OSS for ATST-Clip, Google
+Drive for ATST-Frame), so the registration name is likewise the local
+`model_name` from helpers, composed as `atst-{family}-{arch}`. The
+registry's keys uniformly reference helpers constants
+(`AST_CHECKPOINT.repo_id`, `CLAP_CHECKPOINT.repo_id`,
+`WAV2VEC2_CHECKPOINT.repo_id`, `PANNS_CHECKPOINTS[...].model_name`,
+`ATST_CHECKPOINTS[...].model_name`, and the keys of `BEATS_CHECKPOINTS`),
 rather than literal strings, sharing a single source of truth with the
 checkpoint identities:
 
@@ -52,6 +56,10 @@ checkpoint identities:
 | `MIT/ast-finetuned-audioset-10-10-0.4593` | `AstKaldiFbankTransform` | `AstEncoder` | clip, frame |
 | `laion/clap-htsat-fused` | `ClapLogmelTransform` | `ClapHtsatEncoder` | clip |
 | `facebook/wav2vec2-base` | `Wav2Vec2WaveformTransform` | `Wav2Vec2Encoder` | clip, frame |
+| `atst-clip-small` | `AtstMelspecTransform` | `AtstClipEncoder` | clip |
+| `atst-clip-base` | `AtstMelspecTransform` | `AtstClipEncoder` | clip |
+| `atst-frame-small` | `AtstMelspecTransform` | `AtstFrameEncoder` | clip, frame |
+| `atst-frame-base` | `AtstMelspecTransform` | `AtstFrameEncoder` | clip, frame |
 | `panns-16k-cnn14-max_mean` | `PannsLogmelTransform` | `PannsCnn14Encoder` | clip, frame |
 | `panns-32k-cnn14-max_mean` | `PannsLogmelTransform` | `PannsCnn14Encoder` | clip, frame |
 | `panns-32k-cnn14-decision_level_max` | `PannsLogmelTransform` | `PannsCnn14Encoder` | clip, frame |
@@ -197,6 +205,24 @@ Among these, `target_sample_rate` and `variant` are declared by both
 constructors and passed with the same value to both; the DSP parameters
 are declared only by the Transform; `granularity` is declared only by the
 Encoder.
+
+For the four ATST registration names, `fixed_kwargs` has only one entry:
+`arch` (`"small"` or `"base"`), taken from
+`ATST_CHECKPOINTS[...].arch`. `arch` is declared only by the Encoder, and
+`AtstMelspecTransform` has no constructor parameters (both families share
+one frontend), so the common parameters are routed to reach only the
+Encoder. The family itself is carried by the Encoder class rather than by
+a pinned parameter: `AtstClipEncoder` for the two `atst-clip-*` names and
+`AtstFrameEncoder` for the two `atst-frame-*` names.
+
+`n_blocks` is deliberately **not** pinned. It selects how many trailing
+Transformer blocks are concatenated and therefore changes the output
+width, so it stays a call-site parameter with a default of 1; passing
+`n_blocks=12` reproduces the official downstream configuration. Because
+it is a model-specific parameter rather than a public one, it reaches
+`create_model` through `**kwargs`, and the embedding-extraction CLI
+surfaces it through `--model_kwargs` (see
+[`../../../README.md`](../../../README.md)).
 
 For the 15 BEATs registration names, `fixed_kwargs` has only one entry:
 `checkpoint`, whose value is the registration name itself (i.e., the key

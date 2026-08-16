@@ -15,6 +15,8 @@ from timbral.models import (
 from timbral.models import registry as registry_module
 from timbral.models.encoders import (
     AstEncoder,
+    AtstClipEncoder,
+    AtstFrameEncoder,
     BeatsEncoder,
     ClapHtsatEncoder,
     PannsCnn14Encoder,
@@ -22,6 +24,7 @@ from timbral.models.encoders import (
 )
 from timbral.models.transforms import (
     AstKaldiFbankTransform,
+    AtstMelspecTransform,
     BeatsKaldiFbankTransform,
     ClapLogmelTransform,
     PannsLogmelTransform,
@@ -46,8 +49,16 @@ _BEATS_MODELS = (
     "fine_tuned_beats_iter3_plus_as2m_cpt2",
 )
 
+_ATST_MODELS = (
+    "atst-clip-base",
+    "atst-clip-small",
+    "atst-frame-base",
+    "atst-frame-small",
+)
+
 _BUILTIN_MODELS = (
     "MIT/ast-finetuned-audioset-10-10-0.4593",
+    *_ATST_MODELS,
     *_BEATS_MODELS[:5],
     "facebook/wav2vec2-base",
     *_BEATS_MODELS[5:],
@@ -76,6 +87,13 @@ _EXPECTED_COMPONENT_TYPES = {
     **{
         name: (BeatsKaldiFbankTransform, BeatsEncoder)
         for name in _BEATS_MODELS
+    },
+    **{
+        name: (
+            AtstMelspecTransform,
+            AtstClipEncoder if "clip" in name else AtstFrameEncoder,
+        )
+        for name in _ATST_MODELS
     },
 }
 
@@ -168,6 +186,12 @@ _EXPECTED_METADATA = {
     "panns-32k-cnn14-max_mean": (32000, 2048),
     "beats_iter1": (16000, 768),
     "fine_tuned_beats_iter3_plus_as2m_cpt2": (16000, 768),
+    # The ATST widths below are the n_blocks=1 defaults; ATST-Clip
+    # concatenates a cls branch and a patch-mean branch, hence 2 x D.
+    "atst-clip-small": (16000, 768),
+    "atst-clip-base": (16000, 1536),
+    "atst-frame-small": (16000, 384),
+    "atst-frame-base": (16000, 768),
 }
 
 
@@ -179,7 +203,13 @@ def test_pair_exposes_metadata_attributes(name):
     )
     assert transform.target_sample_rate == expected_sample_rate
     assert encoder.embedding_dim == expected_dim
-    assert type(encoder).embedding_dim == expected_dim
+    # An Encoder whose width is fixed keeps declaring it as a class
+    # attribute; the ATST families derive it from n_blocks and assign
+    # it per instance, so the class-level check applies only to the
+    # former.
+    class_level_dim = getattr(type(encoder), "embedding_dim", None)
+    if class_level_dim is not None:
+        assert class_level_dim == expected_dim
 
 
 def test_frame_granularity_rejected_for_clip_only_model():

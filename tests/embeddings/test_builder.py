@@ -186,6 +186,14 @@ class _FakeEncoder(BaseEncoder):
                 "valid_mask": valid_mask}
 
 
+class _FakeKwargEncoder(_FakeEncoder):
+    """Fake Encoder declaring one model-specific constructor parameter, used to follow model_kwargs down to the component constructor."""
+
+    def __init__(self, *, granularity, n_blocks=1):
+        super().__init__(granularity=granularity)
+        self.n_blocks = n_blocks
+
+
 @pytest.fixture()
 def raw_caches(tmp_path, monkeypatch):
     """Build tiny weak caches (one multiclass, one multilabel) via the real prepare_dataset."""
@@ -812,6 +820,34 @@ def test_strong_frame_embedding_values(strong_frame_cache, fake_model):
     validation = np.asarray(emb["validation"]["embedding"], dtype=np.float32)
     np.testing.assert_array_equal(validation[..., 0],
                                   [[0.0, 1.0, 0.0], [10.0, 0.0, 0.0]])
+
+
+def test_model_kwargs_forwarded_to_create_model(raw_caches, monkeypatch):
+    # --model_kwargs only takes effect if builder splats it into
+    # create_model: an unforwarded mapping would quietly build the default
+    # model while the artifact still lands in the model_kwargs-specific
+    # emb_hash directory, so the wrong features would be cached under a
+    # path claiming they are the right ones.
+    monkeypatch.setitem(
+        models_registry.MODELS, MODEL_NAME,
+        ModelSpec(transform_cls=_FakeTransform,
+                  encoder_cls=_FakeKwargEncoder))
+    built = {}
+    real_create_model = builder.create_model
+
+    def capturing_create_model(name, **kwargs):
+        """Record the call args and the built pair, then delegate."""
+        built["kwargs"] = kwargs
+        pair = real_create_model(name, **kwargs)
+        built["encoder"] = pair.encoder
+        return pair
+
+    monkeypatch.setattr(builder, "create_model", capturing_create_model)
+    prepare_embeddings(_resolve(raw_caches, model_kwargs={"n_blocks": 12}))
+
+    assert built["kwargs"]["n_blocks"] == 12
+    # routed into the constructor rather than merely accepted and dropped
+    assert built["encoder"].n_blocks == 12
 
 
 def test_low_sr_hint_printed(raw_caches, monkeypatch, capsys):

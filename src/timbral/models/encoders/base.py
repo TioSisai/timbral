@@ -31,13 +31,16 @@ class BaseEncoder(nn.Module, ABC):
         supported_granularities: The set of output granularities supported
             by the concrete encoder.
         embedding_dim: The embedding dimension ``D`` of the concrete
-            encoder, declared by each concrete class as a ClassVar.
+            encoder. A concrete class whose width is fixed declares it
+            as a class attribute; one whose width depends on
+            constructor arguments assigns it per instance. Callers must
+            read it off the instance.
     """
 
     supported_granularities: ClassVar[
         frozenset[Granularity]
     ] = frozenset()
-    embedding_dim: ClassVar[int]
+    embedding_dim: int
 
     def __init__(self, granularity: Granularity) -> None:
         """Initialize the encoder and fix the output granularity."""

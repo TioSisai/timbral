@@ -7,6 +7,7 @@ respectively; this module only re-exports the caller-facing symbols from
 """
 
 from .registry import (
+    PUBLIC_PARAMETER_NAMES,
     ModelPair,
     ModelSpec,
     create_model,
@@ -15,6 +16,7 @@ from .registry import (
 )
 
 __all__ = (
+    "PUBLIC_PARAMETER_NAMES",
     "ModelPair",
     "ModelSpec",
     "create_model",
