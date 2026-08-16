@@ -23,7 +23,8 @@ contract in [`base.md`](base.md).
   the trailing `n_blocks` block outputs, each passed through the final norm, with their cls branch and
   patch-mean branch concatenated into a `2 * n_blocks * D` vector;
 - splitting inputs longer than the 250 patch slots of the learned `pos_embed` into chunks and averaging
-  the per-chunk vectors with equal weight;
+  the per-chunk vectors weighted by patch count (a deliberate deviation from the official
+  equal-weight average, see [Clip granularity](#clip-granularity));
 - grouping mixed-length batches by `valid_feature_frames`, keeping the output independent of batch
   composition;
 - producing clip geometry and a valid mask conforming to `BaseEncoder`.
@@ -367,7 +368,8 @@ the vendored `Attention`. The process:
 2. for each group, `index_select` its rows out of the batch;
 3. split the group's frame count `F` into chunk bounds (see *Chunking* below);
 4. for each chunk, slice `group_features[:, start:end]` and run `_chunk_features`;
-5. average the per-chunk vectors, giving that group's `[B_g, 2 * n_blocks * D]` output;
+5. combine the per-chunk vectors weighted by patch count, giving that group's
+   `[B_g, 2 * n_blocks * D]` output;
 6. restore batch order by original index into a zero canvas
    (`helpers.grouping.assemble_flat_groups`).
 
@@ -445,20 +447,36 @@ Three points are fixed by the official downstream default and are not configurab
   the patch count offset by that epsilon rather than taking an exact mean; the epsilon is reproduced
   verbatim, because bit-exact CPU agreement is part of the alignment contract.
 
-Chunks are then combined with **equal weight**:
+Chunks are then combined **weighted by patch count**:
 
 ```text
-clip_embedding = stack(chunk_vectors, dim=0).mean(dim=0)
+w_c            = P_c / sum(P_c)
+clip_embedding = (stack(chunk_vectors, dim=0) * w_c).sum(dim=0)
 ```
 
-This matches the official `get_scene_embedding` of `audiossl/methods/atstframe/embedding.py`, the released
-HEAR-style entry point of the sibling family, which averages every chunk it produces with equal weight. It
-deviates from the official downstream path, where `PretrainedEncoderPLModule` calls
+This is a **deliberate deviation** from the official combination rule. The official
+`get_scene_embedding` of
+`audiossl/methods/atstframe/embedding.py` averages the chunks with equal weight, which makes a patch's
+influence depend on how many patches happen to share its chunk. Because a chunk boundary lands every 250
+patches regardless of the clip's length, the trailing chunk is routinely tiny: at 1004 valid mel frames the
+split is 250 + 1 patches, so under equal weighting the single trailing patch takes half of the result while
+each of the 250 preceding ones takes 1/500 — a 250x spread. It also makes the mapping discontinuous in
+input length: 1003 valid frames drop the sub-patch remainder and give every patch weight 1/250, while one
+more mel frame (10 ms of audio) introduces that one-patch chunk. Measured on the same waveform, going from
+10.02 s to 10.03 s moves the equal-weight embedding by 33.3% in relative L2, against 0.27% once the chunks
+are weighted by patch count.
+
+Weighting each chunk by `P_c` removes the discontinuity, makes the patch-mean branch exactly the mean over
+every patch of the valid region — independent of where the boundaries fall — and weighs each chunk's cls
+summary by the amount of audio that chunk actually covers. A single chunk is returned untouched, so inputs
+of at most 250 patches (10.00 s) still reproduce the official result bit for bit; only multi-chunk inputs
+differ, and the alignment tests assert that difference explicitly rather than letting it pass silently.
+
+The official downstream path is a third rule again: `PretrainedEncoderPLModule` calls
 `get_intermediate_layers_chunks`, whose `chunk_mark` keeps a non-first chunk only while its valid length
-exceeds `chunk_len // 2`; discarding audio based on where a fixed chunk boundary happens to fall would
-make the embedding of a clip depend on its total length in a way the caller cannot predict, so the
-full-coverage variant is used. A 10.05 s input yields 1006 mel frames and therefore contributes a
-1000-frame chunk (250 patches) and a 6-frame chunk (1 patch), each weighted 1/2.
+exceeds `chunk_len // 2`. That one discards audio based on where a fixed boundary happens to fall, so the
+clip vector would stop covering the `[0, valid_seconds]` span its own `geometry` advertises; patch-count
+weighting keeps full coverage without the weight distortion.
 
 Output:
 
@@ -526,8 +544,8 @@ Weight-free, network-free tests (the default suite, `pretrained=False`) must cov
   bool mask;
 - mixed-length batches match individual calls element-wise, including a group short enough to hold one
   patch and a group long enough to be chunked;
-- a 2500-frame input splits into 1000 + 1000 + 500 and equals the equal-weight mean of the three chunk
-  vectors, confirming the short trailing chunk carries full weight;
+- a 2500-frame input splits into 1000 + 1000 + 500 and equals the patch-count-weighted combination of the
+  three chunk vectors, confirming the short trailing chunk carries half the weight of either full chunk;
 - `device` follows the patch embedding weight, and after `.to(device)` input and output devices are correct
   (when CUDA is available);
 - unknown model inputs raise `TypeError`.

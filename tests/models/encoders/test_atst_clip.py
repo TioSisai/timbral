@@ -423,11 +423,12 @@ def test_mixed_batch_matches_single_calls(small_encoder):
         )
 
 
-def test_long_input_is_chunked_and_averaged(small_encoder):
+def test_long_input_is_chunked_and_weighted_by_patch_count(small_encoder):
     # 2500 frames exceed the 250 patch slots of pos_embed and are split
-    # into 1000 + 1000 + 500 frames; the short trailing chunk carries the
-    # same weight as the full ones. Each chunk is re-encoded through the
-    # public API, which reuses the same positional slots.
+    # into 1000 + 1000 + 500 frames, i.e. 250 + 250 + 125 patches; each
+    # chunk contributes in proportion to the patches it holds. Each chunk
+    # is re-encoded through the public API, which reuses the same
+    # positional slots.
     inputs = _make_inputs([2500], seed=11)
     features = inputs["input_features"]
     bounds = [(0, 1000), (1000, 2000), (2000, 2500)]
@@ -444,13 +445,21 @@ def test_long_input_is_chunked_and_averaged(small_encoder):
             for start, end in bounds
         ]
 
-    expected = torch.stack(chunk_embeddings, dim=0).mean(dim=0)
+    stacked = torch.stack(chunk_embeddings, dim=0)
+    weights = torch.tensor(
+        [(end - start) // ATST_PATCH_WIDTH for start, end in bounds],
+        dtype=stacked.dtype,
+    )
+    weights = weights / weights.sum()
+    expected = (stacked * weights[:, None, None]).sum(dim=0)
     assert output["embedding"].shape == (1, 768)
-    assert torch.equal(output["embedding"], expected)
-    # Averaging really mixes the chunks: no single chunk reproduces the
-    # result, so dropping or reweighting one would change it.
+    torch.testing.assert_close(output["embedding"], expected)
+    # The combination really mixes the chunks: no single chunk reproduces
+    # the result, so dropping one would change it.
     for chunk_embedding in chunk_embeddings:
         assert not torch.equal(output["embedding"], chunk_embedding)
+    # Equal weighting would over-count the half-length trailing chunk.
+    assert not torch.allclose(output["embedding"], stacked.mean(dim=0))
 
 
 def test_forward_requires_the_paired_transform_inputs(small_encoder):

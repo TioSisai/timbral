@@ -400,9 +400,11 @@ def test_encoder_alignment_multi_chunk(official_audiossl, granularity):
     """Across chunks the local encoder equals the assembled official result.
 
     Frame granularity concatenates the per-chunk token sequences along
-    time; clip granularity averages the per-chunk vectors with equal
-    weight. The 1000-frame chunk grid is this repository's decision, so
-    the reference is assembled here from official single-chunk calls.
+    time; clip granularity combines the per-chunk vectors in proportion
+    to the patches each chunk holds. The 1000-frame chunk grid and that
+    weighting are this repository's decisions, so the reference is
+    assembled here from official single-chunk calls, and the official
+    equal-weight average is asserted to differ.
     """
     arch = "small"
     scene = granularity == "clip"
@@ -443,8 +445,19 @@ def test_encoder_alignment_multi_chunk(official_audiossl, granularity):
                 ]
                 assert len(chunk_outputs) > 1
                 if scene:
-                    reference = torch.stack(
-                        chunk_outputs, dim=0).mean(dim=0)
+                    stacked = torch.stack(chunk_outputs, dim=0)
+                    chunk_patches = [
+                        (end - start) // ATST_PATCH_WIDTH
+                        for start, end in _chunk_bounds(frames)
+                    ]
+                    weights = stacked.new_tensor(chunk_patches)
+                    weights = weights / weights.sum()
+                    reference = (
+                        stacked * weights[:, None, None]).sum(dim=0)
+                    if min(chunk_patches) != max(chunk_patches):
+                        assert not torch.allclose(
+                            local, stacked.mean(dim=0),
+                            atol=atol, rtol=rtol)
                 else:
                     reference = torch.cat(chunk_outputs, dim=1)
                     assert reference.shape[1] == frames // ATST_PATCH_WIDTH

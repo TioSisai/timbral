@@ -30,8 +30,9 @@ Verification covers the following three categories of properties:
    `FrameAST.get_intermediate_layers`: frame granularity against
    `scene=False`, clip granularity against `scene=True`, at `n = 12`;
 3. The cross-chunk assembly rule, which differs by granularity
-   (concatenation along time for frame, equal-weight average for clip),
-   plus equivalence between a mixed-length batch and per-sample calls.
+   (concatenation along time for frame, patch-count-weighted combination
+   for clip), plus equivalence between a mixed-length batch and per-sample
+   calls.
 
 "Official alignment" does not cover:
 
@@ -42,9 +43,11 @@ Verification covers the following three categories of properties:
   `audiossl/methods/atstframe/embedding.py`; this repository chunks at
   1000 frames on purpose, and the reason is recorded under
   [Chunk Assembly Reference](#chunk-assembly-reference);
-- The downstream `PretrainedEncoderPLModule` clip rule, which discards a
-  trailing chunk shorter than half a chunk; the local encoder follows
-  `get_scene_embedding` instead and weights every chunk equally;
+- Either official cross-chunk combination rule: `get_scene_embedding`
+  weights every chunk equally and `PretrainedEncoderPLModule` discards a
+  trailing chunk shorter than half a chunk, while the local encoder
+  weights each chunk by its patch count; the test asserts the local
+  result differs from the equal-weight average on uneven chunks;
 - The additive attention mask the official `Attention` builds from
   `length`: callers group by valid length and slice to the exact prefix,
   so that mask is uniformly zero and is omitted locally;
@@ -298,11 +301,16 @@ official entry point in `audiossl/methods/atstframe/embedding.py`:
   sequences along time and stamps them at 40 ms intervals. The test
   additionally asserts the assembled length equals
   `valid_feature_frames // 4`;
-- **clip**: `torch.stack(chunk_outputs, dim=0).mean(dim=0)`, as in
-  `get_scene_embedding`, which averages the per-chunk vectors with equal
-  weight regardless of how long the trailing chunk is.
+- **clip**: the per-chunk vectors weighted by patch count,
+  `(stack(chunk_outputs) * P_c / sum(P_c)).sum(dim=0)`. This departs
+  from `get_scene_embedding`, which averages them with equal weight
+  regardless of how short the trailing chunk is; on uneven chunks the
+  test asserts the two rules disagree. For this family the weighting
+  makes the clip vector exactly the mean over every patch token of the
+  valid region.
 
-The deliberate deviation is the chunk width alone. The official chunk is
+The deliberate deviations are the chunk width and that combination
+rule. The official chunk is
 1001 frames, of which `PatchEmbed_v2` uses 1000 and drops one; every
 subsequent chunk therefore starts one frame (10 ms) later than the
 previous chunk's patch grid, and the loss accumulates (30 s yields 749
@@ -435,7 +443,8 @@ covered by the weight-free tests in
   cannot pass;
 - frame assembly asserts the concatenated token count equals
   `valid_feature_frames // 4`;
-- clip assembly is the equal-weight mean of the per-chunk references;
+- clip assembly is the patch-count-weighted combination of the per-chunk
+  references;
 - each mixed-batch sample matches its own standalone call.
 
 ## Numerical Gates
@@ -549,8 +558,9 @@ following conditions hold simultaneously:
 4. Frame granularity is aligned against `get_intermediate_layers(...,
    scene=False)` and clip granularity against `scene=True`, for both
    archs;
-5. Multi-chunk assembly matches concatenation (frame) and equal-weight
-   average (clip), with more than one chunk actually participating;
+5. Multi-chunk assembly matches concatenation (frame) and the
+   patch-count-weighted combination (clip), with more than one chunk
+   actually participating;
 6. Mixed-batch results match their per-sample counterparts, and the
    invalid frame region is exactly zero;
 7. The four official files are verified byte-identical before import,
@@ -657,7 +667,7 @@ magnitude inside its gate.
 - multi-chunk assembly used 2 chunks at 10.05 s and 3 chunks at 21.0 s;
   the frame reference token count equalled `valid_feature_frames // 4`
   in both cases (251 and 525 patches), and the clip reference was the
-  equal-weight mean of the same per-chunk calls;
+  patch-count-weighted combination of the same per-chunk calls;
 - in the mixed batch, each sample's valid prefix matched its standalone
   official result on both devices, `valid_mask` summed to the official
   token count, and every row past the valid region was exactly zero

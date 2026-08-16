@@ -39,10 +39,13 @@ Verification covers the following three categories of properties:
   "Encoder Reference" for the resulting chunk-wise strategy, and
   [`../encoders/atst_clip.md`](../encoders/atst_clip.md) for why the
   deviation is deliberate);
-- The official downstream `PretrainedEncoderPLModule` chunk weighting,
-  which discards a trailing chunk shorter than half a chunk; this
-  repository averages every chunk with equal weight, matching
-  `get_scene_embedding` instead;
+- Either official cross-chunk combination rule: `get_scene_embedding`
+  weights every chunk equally and `PretrainedEncoderPLModule` discards a
+  trailing chunk shorter than half a chunk, while this repository
+  weights each chunk by its patch count. The tests assert that the
+  local result differs from the equal-weight average whenever the chunks
+  are uneven, so the deviation is pinned rather than merely tolerated
+  (see [`../encoders/atst_clip.md`](../encoders/atst_clip.md#clip-granularity));
 - The official additive attention mask and its padded-batch path: the
   local side groups by valid length and slices to the exact prefix, so
   that mask is uniformly zero;
@@ -256,8 +259,12 @@ frames — one local chunk plus at most the sub-patch remainder — it
 produces exactly one non-empty chunk. So what each comparison
 establishes is that **one local chunk forward pass equals one official
 chunk forward pass**, and the test assembles the cross-chunk combination
-itself (stack the per-chunk official results and take the equal-weight
-mean, exactly what the local encoder does).
+itself: it stacks the per-chunk official results and weights them by
+patch count, exactly what the local encoder does. Where the chunks are
+uneven it additionally asserts that the official equal-weight average
+does **not** reproduce the local result, which turns the combination
+deviation into something the suite would notice if it were silently
+reverted.
 Comparing whole clips against the official `get_scene_embedding` would be
 wrong beyond 10 s: the official grid advances 1001 frames per chunk and
 drops one frame per chunk, shifting every later chunk's patch grid by
@@ -386,8 +393,8 @@ therefore the omitted attention mask) auditable.
   (`2 * n_blocks * D`);
 - Numerical gates plus the float64 audit on the final embedding;
 - Multi-chunk: at least two chunks are actually produced, and the local
-  embedding equals the equal-weight mean of the official per-chunk
-  results;
+  embedding equals the patch-count-weighted combination of the official
+  per-chunk results;
 - No NaN/Inf on either side;
 - Mixed batch matches per-sample calls.
 
@@ -495,9 +502,9 @@ following conditions hold simultaneously:
    available;
 4. Single-chunk encoder alignment passes for both architectures on every
    available device;
-5. Multi-chunk alignment passes against the self-assembled equal-weight
-   mean of official single-chunk results, with more than one chunk
-   actually produced;
+5. Multi-chunk alignment passes against the self-assembled
+   patch-count-weighted combination of official single-chunk results,
+   with more than one chunk actually produced;
 6. Every mixed-batch sample matches its standalone official result;
 7. The 0.01-second minimum zero-padding contract passes (the official
    reference recomputes on the same padded waveform);
@@ -588,8 +595,8 @@ All cases pass the final gates.
   513 and the official reference recomputes on the same padded waveform,
   yielding the 4 mel frames of a single patch;
 - The multi-chunk cases produced 2 chunks (10.05 s) and 3 chunks (21.0 s)
-  respectively, and the local embedding matched the equal-weight mean of
-  the corresponding official single-chunk results;
+  respectively, and the local embedding matched the patch-count-weighted
+  combination of the corresponding official single-chunk results;
 - Every mixed-batch sample reproduced its standalone official result, on
   both devices, which confirms that grouping by valid length makes the
   omitted attention mask an exact identity;

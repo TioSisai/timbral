@@ -15,8 +15,11 @@ which are identities under eval) are not ported.
 Both families cap a single forward pass at the 250 patch slots held by
 the learned ``pos_embed``; longer inputs are split into consecutive
 1000-mel-frame chunks, which keeps every patch aligned to the global
-40 ms grid. Clip granularity averages the per-chunk results, frame
-granularity concatenates them along time.
+40 ms grid. Frame granularity concatenates the per-chunk results along
+time. Clip granularity combines them weighted by each chunk's patch
+count, which keeps every patch equally influential no matter where the
+chunk boundaries fall; see :func:`_combine_chunks` for why this departs
+from the official equal-weight average.
 """
 
 from __future__ import annotations
@@ -242,6 +245,54 @@ def _iter_chunk_bounds(num_frames: int) -> list[tuple[int, int]]:
     return bounds
 
 
+def _combine_chunks(
+    chunk_embeddings: list[Tensor],
+    chunk_bounds: list[tuple[int, int]],
+) -> Tensor:
+    """Combine per-chunk clip vectors, weighted by each chunk's patch count.
+
+    The official ``get_scene_embedding`` averages the chunks with equal
+    weight, which makes a patch's influence depend on how many patches
+    happen to share its chunk. A trailing chunk holding a single patch
+    then carries the same weight as a full 250-patch chunk, so the patch
+    inside it counts 250 times more than each patch before it, and one
+    extra mel frame past a chunk boundary moves the output
+    discontinuously: at 1003 valid frames the trailing remainder is
+    dropped and every patch weighs 1/250, while at 1004 frames a
+    one-patch chunk appears and takes half of the result.
+
+    Weighting each chunk by its patch count removes that discontinuity.
+    It also makes the patch-mean branch exactly the mean over all patches
+    of the whole valid region, independent of where the chunk boundaries
+    fall, and it weighs each chunk's cls summary by the amount of audio
+    that chunk actually covers. This is a deliberate deviation from the
+    official combination rule; see the design documents for the full
+    rationale.
+
+    A single chunk is returned untouched, so inputs of at most 250
+    patches keep matching the official result bit for bit.
+
+    Args:
+        chunk_embeddings: One ``[B, D]`` vector per usable chunk.
+        chunk_bounds: The frame bounds those chunks came from, in the
+            same order.
+
+    Returns:
+        The combined ``[B, D]`` clip vector.
+    """
+    if len(chunk_embeddings) == 1:
+        return chunk_embeddings[0]
+    weights = chunk_embeddings[0].new_tensor(
+        [
+            (end - start) // ATST_PATCH_WIDTH
+            for start, end in chunk_bounds
+        ]
+    )
+    weights = weights / weights.sum()
+    stacked = torch.stack(chunk_embeddings, dim=0)
+    return (stacked * weights[:, None, None]).sum(dim=0)
+
+
 class AtstClipEncoder(BaseEncoder):
     """ATST-Clip backbone exposing a clip-granularity embedding.
 
@@ -249,8 +300,9 @@ class AtstClipEncoder(BaseEncoder):
     (``get_intermediate_layers_chunks`` with ``avgpool=True``): the last
     ``n_blocks`` block outputs each pass through the final norm, and the
     cls token and the mean over patch tokens are concatenated, giving a
-    ``2 * n_blocks * D`` vector. Chunks are averaged with equal weight,
-    matching the official ``get_scene_embedding``.
+    ``2 * n_blocks * D`` vector. Inputs beyond one chunk combine their
+    per-chunk vectors weighted by patch count rather than with the
+    official equal weight; see :func:`_combine_chunks`.
 
     The official family provides no frame-level usage for ATST-Clip, so
     only clip granularity is exposed.
@@ -368,13 +420,14 @@ class AtstClipEncoder(BaseEncoder):
         for frame_length, batch_indices in iter_length_groups(
                 valid_feature_frames):
             group_features = input_features.index_select(0, batch_indices)
+            chunk_bounds = _iter_chunk_bounds(frame_length)
             chunk_embeddings = [
                 self._chunk_features(group_features[:, start:end])
-                for start, end in _iter_chunk_bounds(frame_length)
+                for start, end in chunk_bounds
             ]
             batch_index_groups.append(batch_indices)
             embedding_groups.append(
-                torch.stack(chunk_embeddings, dim=0).mean(dim=0))
+                _combine_chunks(chunk_embeddings, chunk_bounds))
 
         embedding = assemble_flat_groups(
             batch_size, batch_index_groups, embedding_groups, input_features)
@@ -394,9 +447,10 @@ class AtstFrameEncoder(BaseEncoder):
     and are concatenated, giving ``n_blocks * D``. At clip granularity
     the official ``scene=True`` mean over patch tokens is used (this
     family has no cls token, so there is no second branch), and chunks
-    are averaged with equal weight; at frame granularity the per-chunk
-    token sequences are concatenated along time, one 40 ms frame per
-    patch.
+    are combined weighted by patch count rather than with the official
+    equal weight (see :func:`_combine_chunks`); at frame granularity the
+    per-chunk token sequences are concatenated along time, one 40 ms
+    frame per patch.
 
     Args:
         granularity: Output granularity, ``"clip"`` or ``"frame"``.
@@ -493,8 +547,9 @@ class AtstFrameEncoder(BaseEncoder):
         for frame_length, batch_indices in iter_length_groups(
                 valid_feature_frames):
             group_features = input_features.index_select(0, batch_indices)
+            chunk_bounds = _iter_chunk_bounds(frame_length)
             chunk_embeddings = []
-            for start, end in _iter_chunk_bounds(frame_length):
+            for start, end in chunk_bounds:
                 tokens = self._chunk_tokens(group_features[:, start:end])
                 chunk_embeddings.append(
                     tokens.sum(dim=1)
@@ -502,7 +557,7 @@ class AtstFrameEncoder(BaseEncoder):
                 )
             batch_index_groups.append(batch_indices)
             embedding_groups.append(
-                torch.stack(chunk_embeddings, dim=0).mean(dim=0))
+                _combine_chunks(chunk_embeddings, chunk_bounds))
 
         embedding = assemble_flat_groups(
             batch_size, batch_index_groups, embedding_groups, input_features)

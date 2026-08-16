@@ -463,12 +463,15 @@ def test_encoder_alignment_single_chunk(official_audiossl, arch):
 
 @pytest.mark.parametrize("arch", ("small",))
 def test_encoder_alignment_multi_chunk(official_audiossl, arch):
-    """Across chunks the local encoder equals the mean of official per-chunk results.
+    """Across chunks the local encoder equals the official per-chunk results combined by patch count.
 
     The local chunk grid (1000 mel frames, i.e. exactly the 250 patch
-    slots of pos_embed) is the repository's own decision, so the
-    reference is assembled here: each chunk is run through the official
-    single-chunk path and the results are averaged with equal weight.
+    slots of pos_embed) and the patch-count weighting are the
+    repository's own decisions, so the reference is assembled here: each
+    chunk is run through the official single-chunk path, and the results
+    are combined in proportion to the patches each chunk holds. The
+    official equal-weight average is asserted to differ, which pins the
+    deviation rather than letting it pass silently.
     """
     with _Tf32Off(), torch.inference_mode():
         for device in _devices():
@@ -498,6 +501,7 @@ def test_encoder_alignment_multi_chunk(official_audiossl, arch):
                 )["embedding"]
 
                 chunk_outputs = []
+                chunk_patches = []
                 for start in range(0, frames, ATST_CHUNK_FRAMES):
                     end = min(start + ATST_CHUNK_FRAMES, frames)
                     if (end - start) < 4:
@@ -508,11 +512,19 @@ def test_encoder_alignment_multi_chunk(official_audiossl, arch):
                             features["input_features"][:, start:end],
                         )
                     )
+                    chunk_patches.append((end - start) // 4)
                 assert len(chunk_outputs) > 1
-                reference = torch.stack(
-                    chunk_outputs, dim=0).mean(dim=0)
+                stacked = torch.stack(chunk_outputs, dim=0)
+                weights = stacked.new_tensor(chunk_patches)
+                weights = weights / weights.sum()
+                reference = (stacked * weights[:, None, None]).sum(dim=0)
                 assert torch.allclose(
                     local, reference, atol=atol, rtol=rtol)
+                if min(chunk_patches) != max(chunk_patches):
+                    # The official rule weights every chunk equally; with
+                    # uneven chunks that is a different vector.
+                    assert not torch.allclose(
+                        local, stacked.mean(dim=0), atol=atol, rtol=rtol)
                 _merge_worst(
                     worst, _audit(local, reference, device))
             _SUMMARY["multi_chunk"][f"{arch}-{device}"] = worst

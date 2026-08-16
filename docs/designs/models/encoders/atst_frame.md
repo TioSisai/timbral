@@ -23,7 +23,8 @@ ATST-Frame does differently.
   family's primary granularity, and the official `scene=True` patch mean as its clip granularity;
 - splitting inputs longer than the 250 positional slots into chunks on a grid that keeps every patch on
   the global 40 ms time base, concatenating chunks along time for frame granularity and averaging them
-  with equal weight for clip granularity;
+  weighted by patch count for clip granularity (a deliberate deviation from the official
+  equal-weight average);
 - grouping mixed-length batches by `valid_feature_frames`, keeping the output independent of batch
   composition;
 - producing geometry, valid_mask, and zero padding conforming to `BaseEncoder`.
@@ -385,11 +386,12 @@ multiplication by the mask is applied; `valid_mask` is the sole source of truth 
 
 ## Clip granularity
 
-Each chunk is pooled over its own patch tokens and the chunk vectors are averaged with equal weight:
+Each chunk is pooled over its own patch tokens and the chunk vectors are combined weighted by patch count:
 
 ```text
 chunk_vector = tokens.sum(dim=1) / (P_c + 1e-6)       # [n, n_blocks * D]
-clip         = stack(chunk_vectors).mean(dim=0)
+w_c          = P_c / sum(P_c)
+clip         = (stack(chunk_vectors) * w_c).sum(dim=0)
 ```
 
 Three points are deliberate:
@@ -397,9 +399,12 @@ Three points are deliberate:
 - the division by `P_c + 1e-6` reproduces the official epsilon rather than taking an exact mean;
 - there is no cls branch, so the width stays `n_blocks * D`; this is the official `scene=True` path of
   `get_intermediate_layers`;
-- chunks are averaged with **equal weight**, matching the official `get_scene_embedding`, and not the
-  downstream `PretrainedEncoderPLModule`, which discards a trailing chunk shorter than half a chunk. Under
-  equal weighting a short trailing chunk counts as much as a full one.
+- chunks are weighted by **patch count**, which is a deliberate deviation from the official
+  `get_scene_embedding`; the rationale, the measured 33.3% versus 0.27% discontinuity at the chunk
+  boundary, and the comparison with the downstream `chunk_mark` rule are documented once in
+  [`atst_clip.md`](atst_clip.md#clip-granularity) and apply verbatim here. For this family the weighting
+  has an extra consequence: with no cls branch, the clip vector becomes exactly the mean over every patch
+  token of the valid region, i.e. the mean of what frame granularity returns.
 
 Output:
 
@@ -410,9 +415,8 @@ valid_mask [B] all True
 ```
 
 Because both the clip pooling and the frame output are linear over the same fully valid tokens,
-`clip == time average of frame output` holds within numerical tolerance whenever the input fits in a single
-chunk, and is used as a cross-check assertion in the tests. It does **not** hold across chunks of unequal
-length, by the equal-weight rule above.
+`clip == time average of frame output` holds within numerical tolerance for both single- and multi-chunk
+inputs, including chunks of unequal length, and is used as a cross-check assertion in the tests.
 
 ## Device, training, and serialization
 

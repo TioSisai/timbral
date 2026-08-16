@@ -560,8 +560,8 @@ def test_chunking_concatenates_chunk_token_sequences(frame_encoder):
     assert torch.equal(output["embedding"], manual)
 
 
-def test_clip_averages_chunks_with_equal_weight(frame_encoder, clip_encoder):
-    """A short trailing chunk still counts as one whole chunk."""
+def test_clip_weights_chunks_by_patch_count(frame_encoder, clip_encoder):
+    """A short trailing chunk counts only for the patches it holds."""
     inputs = _make_inputs([ATST_CHUNK_FRAMES + ATST_PATCH_WIDTH], seed=11)
     frame_tokens = _forward(frame_encoder, inputs)["embedding"][0]
     clip_embedding = _forward(clip_encoder, inputs)["embedding"][0]
@@ -569,17 +569,27 @@ def test_clip_averages_chunks_with_equal_weight(frame_encoder, clip_encoder):
     # 1004 frames are 250 patches plus a trailing chunk of one patch.
     chunk_patches = ATST_CHUNK_FRAMES // ATST_PATCH_WIDTH
     assert frame_tokens.shape[0] == chunk_patches + 1
-    expected = torch.stack(
+    chunk_means = torch.stack(
         (
             frame_tokens[:chunk_patches].mean(dim=0),
             frame_tokens[chunk_patches:].mean(dim=0),
         )
-    ).mean(dim=0)
-
+    )
+    weights = torch.tensor(
+        [chunk_patches, 1], dtype=chunk_means.dtype)
+    weights = weights / weights.sum()
+    expected = (chunk_means * weights[:, None]).sum(dim=0)
     torch.testing.assert_close(clip_embedding, expected)
-    # A plain mean over all 251 patches would drown the trailing chunk,
-    # so equal chunk weighting has to be observable.
-    assert not torch.allclose(clip_embedding, frame_tokens.mean(dim=0))
+
+    # Weighting by patch count is exactly what makes the clip vector the
+    # mean over every patch of the valid region, wherever the chunk
+    # boundaries happen to fall (the small gap is the official pooling
+    # epsilon, which divides by P + 1e-6 rather than P).
+    torch.testing.assert_close(
+        clip_embedding, frame_tokens.mean(dim=0), rtol=1e-5, atol=1e-6)
+    # Equal chunk weighting would instead hand the single trailing patch
+    # half of the result.
+    assert not torch.allclose(clip_embedding, chunk_means.mean(dim=0))
 
 
 def test_minimum_length_yields_one_frame(frame_encoder):
